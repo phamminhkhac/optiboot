@@ -155,6 +155,7 @@
     || defined(__AVR_ATmega324P__)		\
     || defined(__AVR_ATmega324PA__)		\
     || defined(__AVR_ATmega644__)		\
+    || defined(__AVR_ATmega644A__)		\
     || defined(__AVR_ATmega644P__)		\
     || defined(__AVR_ATmega1284__)		\
     || defined(__AVR_ATmega1284P__)

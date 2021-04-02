@@ -19,6 +19,18 @@ ifndef PRODUCTION
 atmega644p: $(PROGRAM)_atmega644p.lst
 endif
 
+HELPTEXT += "target atmega644a    - ATmega644a\n"
+atmega644a: TARGET = atmega644a
+atmega644a: MCU_TARGET = atmega644a
+atmega644a: CFLAGS += $(COMMON_OPTIONS) -DBIGBOOT
+atmega644a: AVR_FREQ ?= 16000000L
+atmega644a: LDSECTIONS  = -Wl,--section-start=.text=0xfc00 -Wl,--section-start=.version=0xfffe
+atmega644a: CFLAGS += $(UART_CMD)
+atmega644a: $(PROGRAM)_atmega644a.hex
+ifndef PRODUCTION
+atmega644a: $(PROGRAM)_atmega644a.lst
+endif
+
 HELPTEXT += "target atmega1284    - ATmega1284p (40 pin, 128k)\n"
 atmega1284: TARGET = atmega1284p
 atmega1284: MCU_TARGET = atmega1284p

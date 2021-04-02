@@ -462,10 +462,8 @@ static void getNch(uint8_t);
 static inline void flash_led(uint8_t);
 #endif
 static inline void watchdogReset();
-static inline void writebuffer(int8_t memtype, addr16_t mybuff,
-			       addr16_t address, pagelen_t len);
-static inline void read_mem(uint8_t memtype,
-			    addr16_t, pagelen_t len);
+static inline void writebuffer(int8_t memtype, addr16_t mybuff, addr16_t address, pagelen_t len);
+static inline void read_mem(uint8_t memtype, addr16_t address, pagelen_t length);
 
 #ifdef SOFT_UART
 void uartDelay() __attribute__ ((naked));
@@ -482,6 +480,9 @@ void uartDelay() __attribute__ ((naked));
 // correct for a bug in avr-libc
 #undef SIGNATURE_2
 #define SIGNATURE_2 0x0A
+#elif #if defined (__AVR_ATmega644A__)
+#undef SIGNATURE_2
+#define SIGNATURE_2 0x09
 #elif defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__)
 #undef RAMSTART
 #define RAMSTART (0x200)
@@ -755,28 +756,34 @@ int main(void) {
 #endif
 #endif
 
+  putch('<');  putch('b');  putch('s');  putch('>'); //khacpm custom bootloader start signal
+
   /* Forever loop: exits by causing WDT reset */
   for (;;) {
     /* get character from UART */
     ch = getch();
 
-    if(ch == STK_GET_PARAMETER) {
+    if(ch == STK_GET_SYNC)
+    {
+      verifySpace();
+    }
+    else if(ch == STK_GET_PARAMETER) {
       unsigned char which = getch();
       verifySpace();
       /*
-       * Send optiboot version as "SW version"
-       * Note that the references to memory are optimized away.
-       */
+      * Send optiboot version as "SW version"
+      * Note that the references to memory are optimized away.
+      */
       if (which == STK_SW_MINOR) {
-	  putch(optiboot_version & 0xFF);
+        putch(optiboot_version & 0xFF);
       } else if (which == STK_SW_MAJOR) {
-	  putch(optiboot_version >> 8);
+        putch(optiboot_version >> 8);
       } else {
-	/*
-	 * GET PARAMETER returns a generic 0x03 reply for
-         * other parameters - enough to keep Avrdude happy
-	 */
-	putch(0x03);
+      /*
+      * GET PARAMETER returns a generic 0x03 reply for
+      * other parameters - enough to keep Avrdude happy
+      */
+      putch(0x03);
       }
     }
     else if(ch == STK_SET_DEVICE) {
@@ -800,7 +807,7 @@ int main(void) {
         RAMPZ &= 0xFE;
       }
 #endif
-      address.word *= 2; // Convert from word address to byte address
+      // address.word *= 2; // Convert from word address to byte address
       verifySpace();
     }
     else if(ch == STK_UNIVERSAL) {
@@ -825,19 +832,15 @@ int main(void) {
       putch(0x00);
 #endif
     }
-    /* Write memory, length is big endian and is in bytes */
     else if(ch == STK_PROG_PAGE) {
+      /* Write memory, length is big endian and is in bytes */
       // PROGRAM PAGE - we support flash programming only, not EEPROM
-      uint8_t desttype;
-      uint8_t *bufPtr;
-      pagelen_t savelength;
-
       GETLENGTH(length);
-      savelength = length;
-      desttype = getch();
+      pagelen_t savelength = length;
+      uint8_t desttype = getch();
 
       // read a page worth of contents
-      bufPtr = buff.bptr;
+      uint8_t *bufPtr = buff.bptr;
       do *bufPtr++ = getch();
       while (--length);
 
@@ -973,11 +976,9 @@ int main(void) {
 #endif // VBP
 
       writebuffer(desttype, buff, address, savelength);
-
-
     }
-    /* Read memory block mode, length is big endian.  */
     else if(ch == STK_READ_PAGE) {
+	/* Read memory block mode, length is big endian.  */
       uint8_t desttype;
       GETLENGTH(length);
 
@@ -987,16 +988,15 @@ int main(void) {
 
       read_mem(desttype, address, length);
     }
-
-    /* Get device signature bytes  */
     else if(ch == STK_READ_SIGN) {
+      /* Get device signature bytes  */
       // READ SIGN - return what Avrdude wants to hear
       verifySpace();
       putch(SIGNATURE_0);
       putch(SIGNATURE_1);
       putch(SIGNATURE_2);
     }
-    else if (ch == STK_LEAVE_PROGMODE) { /* 'Q' */
+    else if (ch == STK_LEAVE_PROGMODE) {
       // Adaboot no-wait mod
       watchdogConfig(WATCHDOG_16MS);
       verifySpace();
@@ -1005,6 +1005,7 @@ int main(void) {
       // This covers the response to commands like STK_ENTER_PROGMODE
       verifySpace();
     }
+    
     putch(STK_OK);
   }
 }
@@ -1092,14 +1093,14 @@ uint8_t getch(void) {
   while(!(LINSIR & _BV(LRXOK)))  {  /* Spin */ }
   if (!(LINSIR & _BV(LFERR))) {
 #endif
-      /*
-       * A Framing Error indicates (probably) that something is talking
-       * to us at the wrong bit rate.  Assume that this is because it
-       * expects to be talking to the application, and DON'T reset the
-       * watchdog.  This should cause the bootloader to abort and run
-       * the application "soon", if it keeps happening.  (Note that we
-       * don't care that an invalid char is returned...)
-       */
+    /*
+    * A Framing Error indicates (probably) that something is talking
+    * to us at the wrong bit rate.  Assume that this is because it
+    * expects to be talking to the application, and DON'T reset the
+    * watchdog.  This should cause the bootloader to abort and run
+    * the application "soon", if it keeps happening.  (Note that we
+    * don't care that an invalid char is returned...)
+    */
     watchdogReset();
   }
 
@@ -1155,8 +1156,8 @@ void getNch(uint8_t count) {
 void verifySpace() {
   if (getch() != CRC_EOP) {
     watchdogConfig(WATCHDOG_16MS);    // shorten WD timeout
-    while (1)			      // and busy-loop so that WD causes
-      ;				      //  a reset and app start.
+    while (1) // and busy-loop so that WD causes
+      ;       //  a reset and app start.
   }
   putch(STK_INSYNC);
 }
@@ -1236,8 +1237,7 @@ void watchdogConfig(uint8_t x) {
 /*
  * void writebuffer(memtype, buffer, address, length)
  */
-static inline void writebuffer(int8_t memtype, addr16_t mybuff,
-			       addr16_t address, pagelen_t len)
+static inline void writebuffer(int8_t memtype, addr16_t mybuff, addr16_t address, pagelen_t len)
 {
     switch (memtype) {
     case 'E': // EEPROM
@@ -1254,51 +1254,51 @@ static inline void writebuffer(int8_t memtype, addr16_t mybuff,
 	while (1)
 	    ; // Error: wait for WDT
 #endif
-	break;
+    break;
     default:  // FLASH
-	/*
-	 * Default to writing to Flash program memory.  By making this
-	 * the default rather than checking for the correct code, we save
-	 * space on chips that don't support any other memory types.
-	 */
-	{
-	    // Copy buffer into programming buffer
-	    uint16_t addrPtr = address.word;
+    /*
+    * Default to writing to Flash program memory.  By making this
+    * the default rather than checking for the correct code, we save
+    * space on chips that don't support any other memory types.
+    */
+    {
+        // Copy buffer into programming buffer
+        uint16_t addrPtr = address.word;
 
-	    /*
-	     * Start the page erase and wait for it to finish.  There
-	     * used to be code to do this while receiving the data over
-	     * the serial link, but the performance improvement was slight,
-	     * and we needed the space back.
-	     */
+        /*
+        * Start the page erase and wait for it to finish.  There
+        * used to be code to do this while receiving the data over
+        * the serial link, but the performance improvement was slight,
+        * and we needed the space back.
+        */
 #ifdef FOURPAGEERASE
-	    if ((address.bytes[0] & ((SPM_PAGESIZE<<2)-1))==0) {
+        if ((address.bytes[0] & ((SPM_PAGESIZE<<2)-1))==0) {
 #endif
-	    __boot_page_erase_short(address.word);
-	    boot_spm_busy_wait();
+        __boot_page_erase_short(address.word + len);
+        boot_spm_busy_wait();
 #ifdef FOURPAGEERASE
-	    }
+        }
 #endif
 
-	    /*
-	     * Copy data from the buffer into the flash write buffer.
-	     */
-	    do {
-		__boot_page_fill_short((uint16_t)(void*)addrPtr, *(mybuff.wptr++));
-		addrPtr += 2;
-	    } while (len -= 2);
+        /*
+        * Copy data from the buffer into the flash write buffer.
+        */
+        do {
+          __boot_page_fill_short((uint16_t)(void*)addrPtr, *(mybuff.wptr++));
+          addrPtr += 2;
+        } while (len -= 2);
 
-	    /*
-	     * Actually Write the buffer to flash (and wait for it to finish.)
-	     */
-	    __boot_page_write_short(address.word);
-	    boot_spm_busy_wait();
+        /*
+        * Actually Write the buffer to flash (and wait for it to finish.)
+        */
+        __boot_page_write_short(address.word);
+        boot_spm_busy_wait();
 #if defined(RWWSRE)
-	    // Reenable read access to flash
-	    __boot_rww_enable_short();
+        // Reenable read access to flash
+        __boot_rww_enable_short();
 #endif
-	} // default block
-	break;
+    } // default block
+	  break;
     } // switch
 }
 
@@ -1309,36 +1309,36 @@ static inline void read_mem(uint8_t memtype, addr16_t address, pagelen_t length)
     switch (memtype) {
 
 #if SUPPORT_EEPROM || BIGBOOT
-    case 'E': // EEPROM
-	do {
-	    putch(eeprom_read_byte((address.bptr++)));
-	} while (--length);
-	break;
+      case 'E': // EEPROM
+    do {
+        putch(eeprom_read_byte((address.bptr++)));
+    } while (--length);
+    break;
 #endif
-    default:
-	do {
+      default:
+          do {
 #ifdef VIRTUAL_BOOT_PARTITION
-        // Undo vector patch in bottom page so verify passes
-	    if (address.word == rstVect0) ch = rstVect0_sav;
-	    else if (address.word == rstVect1) ch = rstVect1_sav;
-	    else if (address.word == saveVect0) ch = saveVect0_sav;
-	    else if (address.word == saveVect1) ch = saveVect1_sav;
-	    else ch = pgm_read_byte_near(address.bptr);
-	    address.bptr++;
+                // Undo vector patch in bottom page so verify passes
+              if (address.word == rstVect0) ch = rstVect0_sav;
+              else if (address.word == rstVect1) ch = rstVect1_sav;
+              else if (address.word == saveVect0) ch = saveVect0_sav;
+              else if (address.word == saveVect1) ch = saveVect1_sav;
+              else ch = pgm_read_byte_near(address.bptr);
+              address.bptr++;
 #elif defined(RAMPZ)
-	    // Since RAMPZ should already be set, we need to use EPLM directly.
-	    // Also, we can use the autoincrement version of lpm to update "address"
-	    //      do putch(pgm_read_byte_near(address++));
-	    //      while (--length);
-	    // read a Flash and increment the address (may increment RAMPZ)
-	    __asm__ ("elpm %0,Z+\n" : "=r" (ch), "=z" (address.bptr): "1" (address));
+              // Since RAMPZ should already be set, we need to use EPLM directly.
+              // Also, we can use the autoincrement version of lpm to update "address"
+              //      do putch(pgm_read_byte_near(address++));
+              //      while (--length);
+              // read a Flash and increment the address (may increment RAMPZ)
+              __asm__ ("elpm %0,Z+\n" : "=r" (ch), "=z" (address.bptr): "1" (address));
 #else
-	    // read a Flash byte and increment the address
-	    __asm__ ("lpm %0,Z+\n" : "=r" (ch), "=z" (address.bptr): "1" (address));
+              // read a Flash byte and increment the address
+              __asm__ ("lpm %0,Z+\n" : "=r" (ch), "=z" (address.bptr): "1" (address));
 #endif
-	    putch(ch);
-	} while (--length);
-	break;
+              putch(ch);
+          } while (--length);
+    break;
     } // switch
 }
 
